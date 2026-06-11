@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+const supabaseAnonKey = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '').trim();
 
 // Sanitize URL: if it ends with /rest/v1/ or /rest/v1, strip it.
 let sanitizedUrl = supabaseUrl;
@@ -66,6 +66,7 @@ export async function uploadIssuePhoto(file: File, category: string): Promise<st
     .upload(filePath, file, {
       cacheControl: '3600',
       upsert: false,
+      contentType: file.type || 'image/jpeg',
     });
 
   if (error) {
