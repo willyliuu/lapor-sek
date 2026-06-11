@@ -6,7 +6,7 @@ import { X, Upload, MapPin, Send } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { useApp, IssueCategory } from '@/context/AppContext';
 import { DynamicLocationPicker } from './DynamicLocationPicker';
-import { supabase } from '@/lib/supabase';
+import { uploadIssuePhoto } from '@/lib/supabase';
 
 export const SubmitModal: React.FC = () => {
   const router = useRouter();
@@ -91,54 +91,13 @@ export const SubmitModal: React.FC = () => {
     e.preventDefault();
     if (!title.trim()) return;
 
-    let photoUrl = undefined;
+    let photoUrl: string | undefined = undefined;
 
     if (photoFile) {
       setIsUploading(true);
       setUploadError('');
       try {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-        const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-        const isPlaceholder = !supabaseUrl || supabaseUrl.includes('your-project') || supabaseAnonKey === 'your-anon-key';
-
-        if (isPlaceholder) {
-          console.warn('Using mock photo upload because Supabase is not configured.');
-          // Simulate upload delay
-          await new Promise((resolve) => setTimeout(resolve, 800));
-          const MOCK_PHOTOS: Record<string, string> = {
-            road_damage: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?w=800&auto=format&fit=crop&q=60',
-            flooding: 'https://images.unsplash.com/photo-1547683905-f686c993aae5?w=800&auto=format&fit=crop&q=60',
-            waste: 'https://images.unsplash.com/photo-1611284446314-60a58ac0deb9?w=800&auto=format&fit=crop&q=60',
-            lighting: 'https://images.unsplash.com/photo-1509114397022-ed747cca3f65?w=800&auto=format&fit=crop&q=60',
-            facility: 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?w=800&auto=format&fit=crop&q=60',
-            other: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=800&auto=format&fit=crop&q=60',
-          };
-          photoUrl = MOCK_PHOTOS[category];
-        } else {
-          const fileExt = photoFile.name.split('.').pop();
-          const uniqueId = Math.random().toString(36).substring(2, 15);
-          const fileName = `${uniqueId}-${Date.now()}.${fileExt}`;
-          const filePath = `${fileName}`;
-
-          // Upload to Supabase Storage
-          const { data, error } = await supabase.storage
-            .from('issue-photos')
-            .upload(filePath, photoFile, {
-              cacheControl: '3600',
-              upsert: false,
-            });
-
-          if (error) {
-            throw error;
-          }
-
-          // Get public URL
-          const { data: publicUrlData } = supabase.storage
-            .from('issue-photos')
-            .getPublicUrl(filePath);
-
-          photoUrl = publicUrlData.publicUrl;
-        }
+        photoUrl = await uploadIssuePhoto(photoFile, category);
       } catch (err: any) {
         console.error('Error uploading photo:', err);
         setUploadError(err.message || 'Failed to upload photo. Please try again.');
