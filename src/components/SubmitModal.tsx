@@ -1,19 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { X, Upload, MapPin, Send } from 'lucide-react';
+import { useDropzone } from 'react-dropzone';
 import { useApp, IssueCategory } from '@/context/AppContext';
 import { DynamicLocationPicker } from './DynamicLocationPicker';
-
-const MOCK_PHOTOS: Record<string, string> = {
-  road_damage: 'https://images.unsplash.com/photo-1515162305285-0293e4767cc2?w=800&auto=format&fit=crop&q=60',
-  flooding: 'https://images.unsplash.com/photo-1547683905-f686c993aae5?w=800&auto=format&fit=crop&q=60',
-  waste: 'https://images.unsplash.com/photo-1611284446314-60a58ac0deb9?w=800&auto=format&fit=crop&q=60',
-  lighting: 'https://images.unsplash.com/photo-1509114397022-ed747cca3f65?w=800&auto=format&fit=crop&q=60',
-  facility: 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?w=800&auto=format&fit=crop&q=60',
-  other: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=800&auto=format&fit=crop&q=60',
-};
+import { uploadIssuePhoto } from '@/lib/supabase';
 
 export const SubmitModal: React.FC = () => {
   const router = useRouter();
@@ -29,7 +22,48 @@ export const SubmitModal: React.FC = () => {
   const [latitude, setLatitude] = useState(-6.2088);
   const [longitude, setLongitude] = useState(106.8456);
   const [address, setAddress] = useState('Jl. Jend. Sudirman, Jakarta');
-  const [isPhotoSelected, setIsPhotoSelected] = useState(false);
+  
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string>('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string>('');
+
+  // Cleanup preview URL on unmount or preview change
+  useEffect(() => {
+    return () => {
+      if (photoPreview) {
+        URL.revokeObjectURL(photoPreview);
+      }
+    };
+  }, [photoPreview]);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    accept: {
+      'image/jpeg': ['.jpeg', '.jpg'],
+      'image/png': ['.png'],
+    },
+    maxSize: 5 * 1024 * 1024, // 5MB
+    multiple: false,
+    onDrop: (acceptedFiles, rejectedFiles) => {
+      setUploadError('');
+      if (rejectedFiles.length > 0) {
+        const error = rejectedFiles[0].errors[0];
+        if (error.code === 'file-too-large') {
+          setUploadError('Image too large — max file size is 5MB.');
+        } else if (error.code === 'file-invalid-type') {
+          setUploadError('Invalid file type. Please upload a JPEG or PNG image.');
+        } else {
+          setUploadError(error.message);
+        }
+        return;
+      }
+      if (acceptedFiles.length > 0) {
+        const file = acceptedFiles[0];
+        setPhotoFile(file);
+        setPhotoPreview(URL.createObjectURL(file));
+      }
+    },
+  });
 
   if (!isOpen) return null;
 
@@ -44,15 +78,33 @@ export const SubmitModal: React.FC = () => {
     setTitle('');
     setDescription('');
     setCategory('road_damage');
-    setIsPhotoSelected(false);
+    setPhotoFile(null);
+    if (photoPreview) {
+      URL.revokeObjectURL(photoPreview);
+      setPhotoPreview('');
+    }
+    setUploadError('');
+    setIsUploading(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
 
-    // Use mock photo URL corresponding to chosen category if user simulated photo select
-    const photoUrl = isPhotoSelected ? MOCK_PHOTOS[category] : undefined;
+    let photoUrl: string | undefined = undefined;
+
+    if (photoFile) {
+      setIsUploading(true);
+      setUploadError('');
+      try {
+        photoUrl = await uploadIssuePhoto(photoFile, category);
+      } catch (err: any) {
+        console.error('Error uploading photo:', err);
+        setUploadError(err.message || 'Failed to upload photo. Please try again.');
+        setIsUploading(false);
+        return; // Stop submission if upload fails
+      }
+    }
 
     addIssue({
       title,
@@ -64,6 +116,7 @@ export const SubmitModal: React.FC = () => {
       photo_url: photoUrl,
     });
 
+    setIsUploading(false);
     handleClose();
   };
 
@@ -139,25 +192,64 @@ export const SubmitModal: React.FC = () => {
               />
             </div>
 
-            {/* Simulated Photo upload */}
+            {/* Photo upload */}
             <div>
               <label className="block text-sm font-semibold text-on-surface mb-2">Add Photo</label>
-              <div 
-                onClick={() => setIsPhotoSelected(!isPhotoSelected)}
-                className={`border-2 border-dashed rounded-lg p-5 flex flex-col items-center justify-center cursor-pointer transition-all ${
-                  isPhotoSelected 
-                    ? 'border-primary bg-primary-fixed/20' 
-                    : 'border-outline-variant bg-surface-variant/20 hover:bg-surface-variant/40'
-                }`}
-              >
-                <Upload className={`w-8 h-8 mb-2 ${isPhotoSelected ? 'text-primary' : 'text-on-surface-variant'}`} />
-                <span className="text-xs font-semibold text-on-surface text-center">
-                  {isPhotoSelected ? 'Photo Mock Connected' : 'Simulate Adding Photo (Click)'}
-                </span>
-                <span className="text-[10px] text-on-surface-variant mt-1 text-center">
-                  {isPhotoSelected ? 'Will display category matching photo' : 'Auto-resolves appropriate mockup image'}
-                </span>
-              </div>
+              
+              {!photoPreview ? (
+                <div 
+                  {...getRootProps()}
+                  className={`border-2 border-dashed rounded-lg p-5 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                    isDragActive 
+                      ? 'border-primary bg-primary/5' 
+                      : 'border-outline-variant bg-surface-variant/20 hover:bg-surface-variant/40'
+                  }`}
+                >
+                  <input {...getInputProps()} />
+                  <Upload className="w-8 h-8 mb-2 text-on-surface-variant" />
+                  <span className="text-xs font-semibold text-on-surface text-center">
+                    {isDragActive ? 'Drop the file here...' : 'Drag & drop photo here, or click to select'}
+                  </span>
+                  <span className="text-[10px] text-on-surface-variant mt-1 text-center">
+                    Supports JPEG, PNG up to 5MB
+                  </span>
+                </div>
+              ) : (
+                <div className="relative border border-outline-variant rounded-lg overflow-hidden bg-surface-variant/10 p-2 flex items-center gap-3">
+                  <div className="w-16 h-16 relative rounded overflow-hidden bg-black/5 shrink-0">
+                    <img 
+                      src={photoPreview} 
+                      alt="Preview" 
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-on-surface truncate">
+                      {photoFile?.name}
+                    </p>
+                    <p className="text-[10px] text-on-surface-variant">
+                      {photoFile ? `${(photoFile.size / 1024 / 1024).toFixed(2)} MB` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoFile(null);
+                      if (photoPreview) {
+                        URL.revokeObjectURL(photoPreview);
+                        setPhotoPreview('');
+                      }
+                    }}
+                    className="px-2.5 py-1 text-xs font-bold text-error hover:bg-error/10 rounded-md transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+              
+              {uploadError && (
+                <p className="text-xs text-error mt-1.5 font-medium">{uploadError}</p>
+              )}
             </div>
           </div>
 
@@ -209,10 +301,20 @@ export const SubmitModal: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/95 transition-colors shadow-sm flex items-center gap-1.5"
+              disabled={isUploading}
+              className="px-5 py-2.5 bg-primary text-white text-sm font-semibold rounded-lg hover:bg-primary/95 transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              <span>Submit Issue</span>
-              <Send className="w-4 h-4" />
+              {isUploading ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  <span>Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <span>Submit Issue</span>
+                  <Send className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         </form>
@@ -221,3 +323,4 @@ export const SubmitModal: React.FC = () => {
   );
 };
 export default SubmitModal;
+
